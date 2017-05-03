@@ -268,3 +268,12 @@ class StrategyContext(object):
     @short_selling_allowed.setter
     def short_selling_allowed(self, value):
         user_system_log.warn(_(u"[abandon] {} is no longer used.").format('context.short_selling_allowed'))
+
+    # ------------------------------------ 二次开发扩展字段 Property ------------------------------------
+
+    @property
+    def serverable_args(self):
+        return Environment.get_instance().serverable_args
+
+
+

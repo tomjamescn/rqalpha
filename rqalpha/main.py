@@ -209,6 +209,13 @@ def run(config, source_code=None):
         env.portfolio = broker.get_portfolio()
         env.benchmark_portfolio = create_benchmark_portfolio(env)
 
+        env.serverable_args = {
+            "top_order_book_id": config.serverable.top_order_book_id,
+            "top_interval_days": config.serverable.top_interval_days,
+            "bottom_order_book_id": config.serverable.bottom_order_book_id,
+            "bottom_interval_days": config.serverable.bottom_interval_days,
+        }
+
         event_source = env.event_source
         assert event_source is not None
 
@@ -272,6 +279,7 @@ def run(config, source_code=None):
             # broker will restore open orders from account
             if isinstance(broker, Persistable):
                 persist_helper.register('broker', broker)
+            persist_helper.register('serverable_args', env.serverable_args)
 
             persist_helper.restore()
             env.event_bus.publish_event(Event(EVENT.POST_SYSTEM_RESTORED))

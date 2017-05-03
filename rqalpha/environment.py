@@ -47,6 +47,7 @@ class Environment(object):
         self.plot_store = None
         self.bar_dict = None
         self._frontend_validators = []
+        self.serverable_args = None
 
     @classmethod
     def get_instance(cls):
