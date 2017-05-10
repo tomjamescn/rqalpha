@@ -210,10 +210,9 @@ def run(config, source_code=None):
         env.benchmark_portfolio = create_benchmark_portfolio(env)
 
         env.serverable_args = {
-            "top_order_book_id": config.serverable.top_order_book_id,
-            "top_interval_days": config.serverable.top_interval_days,
-            "bottom_order_book_id": config.serverable.bottom_order_book_id,
-            "bottom_interval_days": config.serverable.bottom_interval_days,
+            "order_book_id": config.serverable.order_book_id,
+            "data_interval_days": config.serverable.data_interval_days,
+            "data_type": config.serverable.data_type,
         }
 
         event_source = env.event_source

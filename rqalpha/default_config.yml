@@ -58,9 +58,9 @@ validator:
   close_amount: true
 
 serverable:
-  top_order_book_id: ''
-  top_interval_days: 1
-  bottom_order_book_id: ''
-  bottom_interval_days: 1
+  order_book_id: '000001.XSHE'
+  data_interval_days: 1
+  data_type: 'k'
+
 
 

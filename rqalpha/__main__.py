@@ -97,10 +97,9 @@ def update_bundle(data_bundle_path, locale):
 @click.option('-k', '--kind', 'base__securities', type=click.Choice(['stock', 'future', 'stock_future']), help="[Deprecated]")
 @click.option('--strategy-type', 'base__securities', type=click.Choice(['stock', 'future']), help="[Deprecated]")
 # -- 二次开发新增参数
-@click.option('--top-order-book-id', 'serverable__top_order_book_id', type=click.STRING, default=None, help="上图的股票代码")
-@click.option('--top-interval-days', 'serverable__top_interval_days', type=click.INT, default=None, help="上图的时间间隔")
-@click.option('--bottom-order-book-id', 'serverable__bottom_order_book_id', type=click.STRING, default=None,  help="下图的股票代码")
-@click.option('--bottom-interval-days', 'serverable__bottom_interval_days', type=click.INT, default=None, help="下图的时间间隔")
+@click.option('--order-book-id', 'serverable__order_book_id', type=click.STRING, default=None, help="二次开发参数-股票代码")
+@click.option('--data-interval-days', 'serverable__data_interval_days', type=click.INT, default=None, help="二次开发参数-数据时间间隔")
+@click.option('--data-type', 'serverable__data_type', type=click.Choice(['k', 'avg', 'macd']), default=None,  help="二次开发参数-数据类型,暂时支持k[K线], avg[均线], macd三种类型")
 
 def run(**kwargs):
     """
