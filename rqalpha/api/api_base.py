@@ -48,7 +48,7 @@ from ..model.instrument import Instrument, SectorCode as sector_code, IndustryCo
 # noinspection PyUnresolvedReferences
 from ..const import EXECUTION_PHASE, EXC_TYPE, ORDER_STATUS, SIDE, POSITION_EFFECT, ORDER_TYPE, MATCHING_TYPE, RUN_TYPE
 # noinspection PyUnresolvedReferences
-from ..model.order import Order, MarketOrder, LimitOrder
+from ..model.order import Order, MarketOrder, LimitOrder, OrderStyle
 
 
 __all__ = [
@@ -132,6 +132,22 @@ def assure_order_book_id(id_or_ins):
         raise RQInvalidArgument(_(u"unsupported order_book_id type"))
 
     return order_book_id
+
+
+def cal_style(price, style):
+    if price is None and style is None:
+        return MarketOrder()
+
+    if style is not None:
+        if not isinstance(style, OrderStyle):
+            raise RuntimeError
+        return style
+
+    if isinstance(price, OrderStyle):
+        # 为了 order_xxx('RB1710', 10, MarketOrder()) 这种写法
+        return price
+
+    return LimitOrder(price)
 
 
 @export_as_api
@@ -328,9 +344,10 @@ def get_yield_curve(date=None, tenor=None):
              verify_that('frequency').is_valid_frequency(),
              verify_that('fields').are_valid_fields(names.VALID_HISTORY_FIELDS, ignore_none=True),
              verify_that('skip_suspended').is_instance_of(bool),
-             verify_that('include_now').is_instance_of(bool))
+             verify_that('include_now').is_instance_of(bool),
+             verify_that('adjust_type').is_in({'pre', 'none', 'post'}))
 def history_bars(order_book_id, bar_count, frequency, fields=None, skip_suspended=True,
-                 include_now=False):
+                 include_now=False, adjust_type='pre'):
     """
     获取指定合约的历史行情，同时支持日以及分钟历史数据。不能在init中调用。 注意，该API会自动跳过停牌数据。
 
@@ -367,9 +384,7 @@ def history_bars(order_book_id, bar_count, frequency, fields=None, skip_suspende
     :type order_book_id: `str`
 
     :param int bar_count: 获取的历史数据数量，必填项
-
     :param str frequency: 获取数据什么样的频率进行。'1d'或'1m'分别表示每日和每分钟，必填项
-
     :param str fields: 返回数据字段。必填项。见下方列表。
 
     =========================   ===================================================
@@ -391,6 +406,7 @@ def history_bars(order_book_id, bar_count, frequency, fields=None, skip_suspende
 
     :param bool skip_suspended: 是否跳过停牌数据
     :param bool include_now: 是否包含当前数据
+    :param str adjust_type: 复权类型，默认为前复权 pre；可选 pre, none, post
 
     :return: `ndarray`, 方便直接与talib等计算库对接，效率较history返回的DataFrame更高。
 
@@ -410,8 +426,11 @@ def history_bars(order_book_id, bar_count, frequency, fields=None, skip_suspende
     env = Environment.get_instance()
     dt = env.calendar_dt
 
-    if frequency[-1] == 'm' and Environment.get_instance().config.base.frequency == '1d':
+    if frequency[-1] == 'm' and env.config.base.frequency == '1d':
         raise RQInvalidArgument('can not get minute history in day back test')
+
+    if adjust_type not in {'pre', 'post', 'none'}:
+        raise RuntimeError('invalid adjust_type')
 
     if frequency == '1d':
         sys_frequency = Environment.get_instance().config.base.frequency
@@ -424,7 +443,8 @@ def history_bars(order_book_id, bar_count, frequency, fields=None, skip_suspende
             include_now = False
 
     return env.data_proxy.history_bars(order_book_id, bar_count, frequency, fields, dt,
-                                       skip_suspended=skip_suspended, include_now=include_now)
+                                       skip_suspended=skip_suspended, include_now=include_now,
+                                       adjust_type=adjust_type, adjust_orig=env.trading_dt)
 
 
 @export_as_api
@@ -434,12 +454,17 @@ def history_bars(order_book_id, bar_count, frequency, fields=None, skip_suspende
                                 EXECUTION_PHASE.ON_TICK,
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
-@apply_rules(verify_that('type').is_in(names.VALID_INSTRUMENT_TYPES, ignore_none=True))
-def all_instruments(type=None):
+@apply_rules(verify_that('type').are_valid_fields(names.VALID_INSTRUMENT_TYPES, ignore_none=True),
+             verify_that('date').is_valid_date(ignore_none=True))
+def all_instruments(type=None, date=None):
     """
     获取某个国家市场的所有合约信息。使用者可以通过这一方法很快地对合约信息有一个快速了解，目前仅支持中国市场。
 
     :param str type: 需要查询合约类型，例如：type='CS'代表股票。默认是所有类型
+
+    :param date: 查询时间点
+    :type date: `str` | `datetime` | `date`
+
 
     :return: `pandas DataFrame` 所有合约的基本信息。
 
@@ -478,7 +503,36 @@ def all_instruments(type=None):
         ...
 
     """
-    return Environment.get_instance().data_proxy.all_instruments(type)
+    env = Environment.get_instance()
+    if date is None:
+        dt = env.trading_dt
+    else:
+        dt = pd.Timestamp(date).to_pydatetime()
+        dt = min(dt, env.trading_dt)
+
+    if type is not None:
+        if isinstance(type, six.string_types):
+            type = [type]
+
+        types = set()
+        for t in type:
+            if t == 'Stock':
+                types.add('CS')
+            elif t == 'Fund':
+                types.update(['ETF', 'LOF', 'SF', 'FenjiA', 'FenjiB', 'FenjiMu'])
+            else:
+                types.add(t)
+    else:
+        types = None
+
+    result = [i for i in env.data_proxy.all_instruments(types, dt)
+              if i.type != 'CS' or not env.data_proxy.is_suspended(i.order_book_id, dt)]
+    if types is not None and len(types) == 1:
+        return pd.DataFrame([i.__dict__ for i in result])
+
+    return pd.DataFrame(
+        [[i.order_book_id, i.symbol, i.abbrev_symbol, i.type, i.listed_date, i.de_listed_date] for i in result],
+        columns=['order_book_id', 'symbol', 'abbrev_symbol', 'type', 'listed_date', 'de_listed_date'])
 
 
 @export_as_api
@@ -694,9 +748,9 @@ def to_date(date):
                                 EXECUTION_PHASE.AFTER_TRADING,
                                 EXECUTION_PHASE.SCHEDULED)
 @apply_rules(verify_that('order_book_id').is_valid_instrument(),
-             verify_that('start_date').is_valid_date(ignore_none=False),
-             verify_that('adjusted').is_instance_of(bool))
-def get_dividend(order_book_id, start_date, adjusted=True):
+             verify_that('start_date').is_valid_date(ignore_none=False))
+def get_dividend(order_book_id, start_date, *args, **kwargs):
+    # adjusted 参数在不复权数据回测时不再提供
     env = Environment.get_instance()
     dt = env.trading_dt.date() - datetime.timedelta(days=1)
     start_date = to_date(start_date)
@@ -706,8 +760,13 @@ def get_dividend(order_book_id, start_date, adjusted=True):
                 start_date, dt
             ))
     order_book_id = assure_order_book_id(order_book_id)
-    df = env.data_proxy.get_dividend(order_book_id, adjusted)
-    return df[start_date:dt]
+    df = env.data_proxy.get_dividend(order_book_id)
+    if df is None:
+        return None
+
+    sd = start_date.year * 10000 + start_date.month * 100 + start_date.day
+    ed = dt.year * 10000 + dt.month * 100 + dt.day
+    return df[(df['announcement_date'] >= sd) & (df['announcement_date'] <= ed)]
 
 
 @export_as_api
