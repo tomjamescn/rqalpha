@@ -78,11 +78,10 @@ def update_bundle(data_bundle_path, locale):
 @click.option('-fc', '--future-starting-cash', 'base__future_starting_cash', type=click.FLOAT)
 @click.option('-bm', '--benchmark', 'base__benchmark', type=click.STRING, default=None)
 @click.option('-mm', '--margin-multiplier', 'base__margin_multiplier', type=click.FLOAT)
-@click.option('-st', '--security', 'base__securities', multiple=True, type=click.Choice(['stock', 'future']))
+@click.option('-st', '--security', 'base__securities', multiple=True, type=click.Choice(['stock', 'future', 'stock_future']))
 @click.option('-fq', '--frequency', 'base__frequency', type=click.Choice(['1d', '1m', 'tick']))
 @click.option('-rt', '--run-type', 'base__run_type', type=click.Choice(['b', 'p']), default="b")
 @click.option('--resume', 'base__resume_mode', is_flag=True)
-@click.option('--handle-split/--not-handle-split', 'base__handle_split', default=None, help="handle split")
 # -- Extra Configuration
 @click.option('-l', '--log-level', 'extra__log_level', type=click.Choice(['verbose', 'debug', 'info', 'error', 'none']))
 @click.option('--locale', 'extra__locale', type=click.Choice(['cn', 'en']), default="cn")
@@ -94,8 +93,8 @@ def update_bundle(data_bundle_path, locale):
 @click.option('-mc', '--mod-config', 'mod_configs', nargs=2, multiple=True, type=click.STRING, help="mod extra config")
 # -- DEPRECATED ARGS && WILL BE REMOVED AFTER VERSION 3.0.0
 @click.option('-i', '--init-cash', 'base__stock_starting_cash', type=click.FLOAT, help="[Deprecated]")
-@click.option('-k', '--kind', 'base__securities', type=click.Choice(['stock', 'future', 'stock_future']), help="[Deprecated]")
-@click.option('--strategy-type', 'base__securities', type=click.Choice(['stock', 'future']), help="[Deprecated]")
+@click.option('-k', '--kind', 'base__securities', help="[Deprecated]", multiple=True, type=click.Choice(['stock', 'future', 'stock_future']))
+@click.option('--strategy-type', 'base__securities', help="[Deprecated]", multiple=True, type=click.Choice(['stock', 'future', 'stock_future']))
 # -- 二次开发新增参数
 @click.option('--order-book-id', 'serverable__order_book_id', type=click.STRING, default=None, help="二次开发参数-股票代码")
 @click.option('--data-interval-days', 'serverable__data_interval_days', type=click.INT, default=None, help="二次开发参数-数据时间间隔")
@@ -109,9 +108,11 @@ def run(**kwargs):
     if config_path is not None:
         config_path = os.path.abspath(config_path)
         kwargs.pop('config_path')
+    if not kwargs.get('base__securities', None):
+        kwargs.pop('base__securities', None)
 
     from . import main
-    main.run(parse_config(kwargs, config_path))
+    main.run(parse_config(kwargs, config_path=config_path, click_type=True))
 
 
 @cli.command()
@@ -126,7 +127,7 @@ def examples(directory):
         shutil.copytree(source_dir, os.path.join(directory, "examples"))
     except OSError as e:
         if e.errno == errno.EEXIST:
-            print("Folder examples is exists.")
+            six.print_("Folder examples is exists.")
 
 
 @cli.command()
@@ -136,7 +137,7 @@ def version(**kwargs):
     Output Version Info
     """
     from rqalpha import version_info
-    print("Current Version: ", version_info)
+    six.print_("Current Version: ", version_info)
 
 
 @cli.command()
@@ -148,7 +149,7 @@ def generate_config(directory):
     default_config = os.path.join(os.path.dirname(os.path.realpath(__file__)), "default_config.yml")
     target_config_path = os.path.abspath(os.path.join(directory, 'config.yml'))
     shutil.copy(default_config, target_config_path)
-    print("Config file has been generated in", target_config_path)
+    six.print_("Config file has been generated in", target_config_path)
 
 
 # For Mod Cli
@@ -193,8 +194,8 @@ def mod(cmd, params):
             Fore.CYAN + "status" + Fore.RESET
         ]
 
-        print(tabulate(table, headers=headers, tablefmt="psql"))
-        print(Fore.LIGHTYELLOW_EX + "You can use `rqalpha mod list/install/uninstall/enable/disable` to manage your mods")
+        six.print_(tabulate(table, headers=headers, tablefmt="psql"))
+        six.print_(Fore.LIGHTYELLOW_EX + "You can use `rqalpha mod list/install/uninstall/enable/disable` to manage your mods")
 
     def install(params):
         """
@@ -212,7 +213,7 @@ def mod(cmd, params):
         for mod_name in mod_list:
             mod_name_index = params.index(mod_name)
             if mod_name.startswith("rqalpha_mod_sys_"):
-                print('System Mod can not be installed or uninstalled')
+                six.print_('System Mod can not be installed or uninstalled')
                 return
             if "rqalpha_mod_" in mod_name:
                 lib_name = mod_name
@@ -221,33 +222,36 @@ def mod(cmd, params):
             params[mod_name_index] = lib_name
 
         # Install Mod
-        pip_main(params)
+        installed_result = pip_main(params)
 
         # Export config
         mod_config_path = get_mod_config_path(generate=True)
         mod_config = load_mod_config(mod_config_path, loader=yaml.Loader)
 
-        if len(mod_list) == 0:
-            """
-            主要是方便 `pip install -e .` 这种方式 本地调试 Mod 使用，需要满足以下条件:
-            1.  `rqalpha mod install -e .` 命令是在对应 自定义 Mod 的根目录下
-            2.  该 Mod 必须包含 `setup.py` 文件（否则也不能正常的 `pip install -e .` 来安装）
-            3.  该 Mod 包名必须按照 RQAlpha 的规范来命名，具体规则如下
-                *   必须以 `rqalpha-mod-` 来开头，比如 `rqalpha-mod-xxx-yyy`
-                *   对应import的库名必须要 `rqalpha_mod_` 来开头，并且需要和包名后半部分一致，但是 `-` 需要替换为 `_`, 比如 `rqalpha_mod_xxx_yyy`
-            """
-            mod_name = _detect_package_name_from_dir()
-            mod_name = mod_name.replace("-", "_").replace("rqalpha_mod_", "")
-            mod_list.append(mod_name)
+        if installed_result == 0:
+            # 如果为0，则说明安装成功
+            if len(mod_list) == 0:
+                """
+                主要是方便 `pip install -e .` 这种方式 本地调试 Mod 使用，需要满足以下条件:
+                1.  `rqalpha mod install -e .` 命令是在对应 自定义 Mod 的根目录下
+                2.  该 Mod 必须包含 `setup.py` 文件（否则也不能正常的 `pip install -e .` 来安装）
+                3.  该 Mod 包名必须按照 RQAlpha 的规范来命名，具体规则如下
+                    *   必须以 `rqalpha-mod-` 来开头，比如 `rqalpha-mod-xxx-yyy`
+                    *   对应import的库名必须要 `rqalpha_mod_` 来开头，并且需要和包名后半部分一致，但是 `-` 需要替换为 `_`, 比如 `rqalpha_mod_xxx_yyy`
+                """
+                mod_name = _detect_package_name_from_dir()
+                mod_name = mod_name.replace("-", "_").replace("rqalpha_mod_", "")
+                mod_list.append(mod_name)
 
-        for mod_name in mod_list:
-            if "rqalpha_mod_" in mod_name:
-                mod_name = mod_name.replace("rqalpha_mod_", "")
-            mod_config['mod'][mod_name] = {}
-            mod_config['mod'][mod_name]['enabled'] = False
+            for mod_name in mod_list:
+                if "rqalpha_mod_" in mod_name:
+                    mod_name = mod_name.replace("rqalpha_mod_", "")
+                mod_config['mod'][mod_name] = {}
+                mod_config['mod'][mod_name]['enabled'] = False
 
-        dump_config(mod_config_path, mod_config)
+            dump_config(mod_config_path, mod_config)
         list({})
+        return installed_result
 
     def uninstall(params):
         """
@@ -266,7 +270,7 @@ def mod(cmd, params):
         for mod_name in mod_list:
             mod_name_index = params.index(mod_name)
             if mod_name.startswith("rqalpha_mod_sys_"):
-                print('System Mod can not be installed or uninstalled')
+                six.print_('System Mod can not be installed or uninstalled')
                 return
             if "rqalpha_mod_" in mod_name:
                 lib_name = mod_name
@@ -275,7 +279,7 @@ def mod(cmd, params):
             params[mod_name_index] = lib_name
 
         # Uninstall Mod
-        pip_main(params)
+        uninstalled_result = pip_main(params)
 
         # Remove Mod Config
         mod_config_path = get_mod_config_path(generate=True)
@@ -289,6 +293,7 @@ def mod(cmd, params):
 
         dump_config(mod_config_path, mod_config)
         list({})
+        return uninstalled_result
 
     def enable(params):
         """
@@ -303,7 +308,9 @@ def mod(cmd, params):
         try:
             import_module(module_name)
         except ImportError:
-            install([module_name])
+            installed_result = install([module_name])
+            if installed_result != 0:
+                return
 
         mod_config_path = get_mod_config_path(generate=True)
         mod_config = load_mod_config(mod_config_path, loader=yaml.Loader)
